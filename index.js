@@ -1,40 +1,137 @@
-//node는 CommonJS 문법을 사용
-//import -> require()
-const http = require ('http');
+const express = require("express");
+const cors = require('cors');
+const app = express();
+const port = process.env.PORT || 8080; //헤로쿠에서 포트 지정하는게 있으면 그 번호를 사용하고 없으면 8080포트를 사용
+const modles = require('./models');
 
-//본인 컴퓨터의 주소를 의미함(127.0.0.1)
-const hostname = "127.0.0.1";
-const port = 8080;
+//json 형식의 데이터를 처리할 수 있게 설정하기
+app.use(express.json());
+//브라우저 cors이슈를 막기위해 사용(모든 브라우저의 요청을 일정하게 받겠다)
+app.use(cors());
 
-//서버만들기 createServer(function(request,response))
-const server = http.createServer(function(req,res){
-    //요청정보 req : 웹브라우저가 요청한 정보를 담음
-    //응답 res : 결과를 보여줌
-    const path = req.url;
-    const method = req.method;
-    if(path === "/products"){
-        if(method === "GET"){
-            //응답을 보낼때 컨텐츠 타입을 제이슨 객체를 헤더에 보낸다.
-            res.writeHead(200,{'Content-Type':'application/json'})
-            //js배열을 JSON타입으로 변경해서 변수에 담기
-            const products = JSON.stringify([
-                    {
-                        name:"거실조명",
-                        price: 50000,
-                    },
-                    {
-                        name:"어린이조명",
-                        price: 50000,
+//upload폴더에 있는 파일에 접근할 수 있도록 설정
+app.use("/upload",express.static("upload"));
 
-                    }
-                ]);
-            res.end(products);
-            
+//업로드 이미지를 관리하는 스토리지 서버 연결 -> 멀터를 사용하겠다.
+const multer = require("multer");
+//이미지 파일이 요청오면 어디에 저장할건지 지정
+const upload = multer({
+    storage: multer.diskStorage({
+        destination : function(req, file,cb){
+            //어디에 지정할것이냐? upload/
+            cb(null,'upload/')
+        },
+        filename:function(req,file,cb){
+            //어떤 이름으로 저장할것인지?
+            //file객체의 오리지널 이름으로 저장하겠다.
+            cb(null,file.originalname)
         }
-    }
-    
+    })
 })
 
-//listen은 대기 호스트네임과 포트번호로 요청을 기다림
-server.listen(port,hostname);
-console.log('조명쇼핑몰 서버가 돌아가고 있습니다');
+
+
+//요청처리
+//app.메서드(경로,응답(콜백함수로 작성))
+//이미지 파일을 post로 요청이 왔을때 upload라는 폴더에 이미지를 저장하기
+//이미지가 하나일때 single
+app.post('/image',upload.single('image'),(req,res)=>{
+    const file = req.file;
+    console.log(file);
+    res.send({
+        imgsrc:"http://localhost:3000/"+file.destination+file.filename
+    })
+})
+
+app.get('/products',async(req,res)=>{
+   
+    //데이터베이스 조회하기
+    modles.Product.findAll()
+    .then(result=>{
+        console.log("제품전체조회",result);
+        res.send(result);
+    })
+    .catch(e=>{
+        console.error(e)
+        res.send("파일조회에 문제가 있습니다.")
+    })
+
+    
+})
+//method get전송이고, url은 /product/2 로 요청이 왔을때
+app.get('/product/:id', async (req,res)=>{ //id를 파라미터 방식으로 받겠다.
+    console.log(req);
+    const params = req.params;
+    const {id} = params;
+    //하나만 조회할때 findOne --> select문
+    modles.Product.findOne({
+        //조건절
+        where:{
+            id:id
+        }
+    })
+    .then(result=>{
+        res.send(result);
+    })
+    .catch(e=>{
+        console.error(e)
+        res.send("상품조회에 문제가 생겼습니다.")
+    })
+        
+}) 
+app.post("/products",(req,res)=>{
+    //http:body에 있는 데이터
+    const body = req.body;
+    //body객체에 있는 값을 각각 변수에 할당하기
+    const {name, price, seller, imgsrc, desc} = body;
+    if(!name || !price || !seller) {
+        res.send ("모든 필드를 입력해주세요");
+    }
+    //Product테이블에 레코드를 삽입
+    modles.Product.create({
+        name,
+        price,
+        seller,
+        imgsrc,
+        desc
+    }).then(result=>{
+        console.log('상품 생성 결과 : ' ,result);
+        res.send({result});
+    })
+    .catch(e=>{
+        console.error(e);
+        res.send('상품업로드에 문제가 생겼습니다.')
+
+    }
+        )
+})
+
+app.post('/green',async(req,res)=>{
+    console.log(req);
+    res.send('그린게시판에 게시글이 등록되었습니다.');
+});
+
+//delete 삭제하기
+app.delete('/product/:id', async (req,res)=>{
+    const params = req.params;
+    modles.Product.destroy({ where: { id: params.id }})
+.then(res.send("상품이 삭제되었습니다."));
+})
+
+//실행
+app.listen(port,()=>{
+    console.log('쇼핑몰 서버가 동작중입니다.');
+    //sequelize와 데이터베이스 연결 작업
+    //데이터베이스 동기화
+    modles.sequelize
+    .sync()
+    .then(()=>{
+        console.log('db연결 성공~~~~~');
+    })
+    .catch(e=>{
+        console.error(e);
+        console.log('db연결 에러');
+        //서버실행이 안되면 프로세스를 종료
+        process.exit();  
+    })
+})
